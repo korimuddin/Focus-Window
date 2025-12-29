@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Focus Window — Ambient Environments + Pomodoro</title>
+<style>
+  :root{
+    --bg:#0b0b0b; --fg:#e8e8e8; --muted:#9aa0a6; --accent:#7dd3fc; --ring:#1f2937; --radius:18px;
+    --panel:#0f0f10; --panelBorder:#1f1f22; --good:#22c55e; --warn:#f59e0b; --bad:#ef4444;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0; background:radial-gradient(1200px 800px at 80% -10%, #111 0%, #0b0b0b 60%, #000 100%);
+    color:var(--fg); font:16px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Inter,Helvetica,Arial,sans-serif;
+    display:flex; flex-direction:column; align-items:center; gap:12px; padding:14px;}
+
+  header{width:min(1250px,96vw); display:flex; align-items:center; justify-content:space-between; gap:10px;}
+  .brand{display:flex; align-items:center; gap:10px; letter-spacing:.2px}
+  .dot{width:10px; height:10px; border-radius:999px; background:var(--accent); box-shadow:0 0 16px 6px rgba(125,211,252,.2)}
+  h1{margin:0; font-size:1rem; font-weight:600}
+
+  .controls{display:flex; flex-wrap:wrap; gap:8px; align-items:center}
+  select,button,input[type="range"],input[type="number"],input[type="text"]{
+    background:#151515; color:var(--fg); border:1px solid #2a2a2a; padding:10px 12px; border-radius:12px; outline:none;
+  }
+  select:focus,button:focus,input:focus{box-shadow:0 0 0 3px #1e293b}
+  button{display:inline-flex; align-items:center; gap:8px; cursor:pointer; transition:transform .05s ease}
+  button:active{transform:translateY(1px)}
+  .hint{color:var(--muted); font-size:.875rem}
+
+  .row{width:min(1250px,96vw); display:flex; align-items:center; justify-content:space-between; gap:10px}
+  .row .group{display:flex; align-items:center; gap:8px; flex-wrap:wrap}
+
+  /* Stage */
+  .stage-wrap{position:relative; width:90vw; height:90vh; border-radius:var(--radius); background:#000; overflow:hidden;
+    display:grid; place-items:center; box-shadow:0 30px 80px rgba(0,0,0,.65), 0 0 0 1px #000 inset}
+  video{width:100%; height:100%; object-fit:cover; display:block; filter:contrast(1.05) saturate(1.05)}
+  .vignette{pointer-events:none; position:absolute; inset:0;
+    background:radial-gradient(ellipse at center, rgba(0,0,0,0) 62%, rgba(0,0,0,.35) 78%, rgba(0,0,0,.68) 100%)}
+  .hud{position:absolute; top:10px; left:10px; font-size:.85rem; color:#d1d5db; opacity:.9; padding:6px 10px;
+    background:rgba(0,0,0,.35); border:1px solid rgba(255,255,255,.06); border-radius:10px; backdrop-filter:blur(4px)}
+
+  /* Ambient panel (compact) */
+  .ambient{width:min(1250px,96vw); background:var(--panel); border:1px solid var(--panelBorder); border-radius:14px; padding:8px 10px;
+    display:flex; align-items:center; justify-content:space-between; gap:10px}
+  .ambient .toggles{display:flex; flex-wrap:wrap; gap:6px}
+  .chip{display:inline-flex; align-items:center; gap:6px; padding:8px 10px; border-radius:999px; border:1px solid #26262b; cursor:pointer;
+    background:#131316}
+  .chip input{margin:0}
+  .ambient .vol{display:flex; align-items:center; gap:6px}
+
+  /* Pomodoro */
+  .pomodoro{display:flex; align-items:center; gap:8px; flex-wrap:wrap}
+  .time{font-variant-numeric:tabular-nums; font-weight:700; letter-spacing:.5px; padding:6px 10px; border-radius:10px;
+    background:#111318; border:1px solid #23252b}
+  .mode-pill{padding:6px 10px; border-radius:999px; border:1px solid #23252b; background:#131316}
+  .settings{position:relative}
+  .settings-panel{position:absolute; right:0; top:120%; width:320px; background:#131318; border:1px solid #23252b; border-radius:12px;
+    padding:10px; display:none; z-index:20}
+  .settings.open .settings-panel{display:block}
+  .settings-panel label{display:flex; align-items:center; justify-content:space-between; gap:8px; margin:6px 0}
+
+  /* Tasks side panel */
+  .tasks{position:fixed; top:14px; right:14px; width:min(380px,90vw); height:calc(100vh - 28px); background:#0d0e10;
+    border:1px solid #202025; border-radius:16px; box-shadow:0 10px 40px rgba(0,0,0,.6); transform:translateX(120%);
+    transition:transform .28s ease; display:flex; flex-direction:column; z-index:50}
+  .tasks.open{transform:translateX(0)}
+  .tasks header{padding:12px; border-bottom:1px solid #202025; display:flex; align-items:center; justify-content:space-between}
+  .tasks h2{margin:0; font-size:1rem}
+  .tasks .list{padding:12px; overflow:auto; flex:1}
+  .task{display:flex; align-items:center; gap:8px; background:#0f1115; border:1px solid #1f2228; padding:10px; border-radius:10px; margin-bottom:8px}
+  .task input[type="checkbox"]{width:18px; height:18px}
+  .task.done{opacity:.7; text-decoration:line-through}
+  .tasks .new{display:flex; gap:8px; padding:12px; border-top:1px solid #202025}
+  .x{background:#17181c}
+
+  footer{width:min(1250px,96vw); display:flex; justify-content:space-between; align-items:center; color:var(--muted); font-size:.85rem}
+  .kbd{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace; background:#0f172a; color:#e5e7eb;
+    padding:.2rem .4rem; border-radius:6px; border:1px solid #1f2937}
+
+  @media (max-width:820px){ header{flex-direction:column; align-items:stretch} .row{flex-direction:column; align-items:stretch} }
+</style>
+</head>
+<body>
+  <header>
+    <div class="brand"><span class="dot" aria-hidden="true"></span><h1>Focus Window</h1></div>
+    <div class="controls" role="group" aria-label="Playback and scene controls">
+      <label for="scene" class="sr-only" style="position:absolute;left:-9999px">Select Environment</label>
+      <select id="scene" title="Select Environment">
+        <option value="plane" data-src="https://cdn.coverr.co/videos/coverr-airplane-window-0127/1080p.mp4">✈️ Plane — window seat</option>
+        <option value="train" data-src="https://cdn.coverr.co/videos/coverr-train-journey-7726/1080p.mp4">🚆 Train — window seat</option>
+        <option value="library" data-src="https://cdn.coverr.co/videos/coverr-library-sunlight-5709/1080p.mp4">📚 Library — by the window</option>
+      </select>
+      <button id="togglePlay" aria-label="Play/Pause (Space)">▶️ Play</button>
+      <button id="mute" aria-label="Mute/Unmute (M)">🔇 Mute</button>
+      <label class="hint" for="vol" style="margin-left:6px">Vol</label>
+      <input id="vol" type="range" min="0" max="1" step="0.01" value="0" aria-label="Volume" />
+      <button id="fullscreen" aria-label="Fullscreen (F)">⛶ Fullscreen</button>
+    </div>
+  </header>
+
+  <div class="row ambient">
+    <div class="group">
+      <span class="hint">Ambient:</span>
+      <label class="chip"><input type="checkbox" class="amb-toggle" value="cabin"> Cabin hum</label>
+      <label class="chip"><input type="checkbox" class="amb-toggle" value="rail"> Rail rattle</label>
+      <label class="chip"><input type="checkbox" class="amb-toggle" value="rain"> Rain</label>
+      <label class="chip"><input type="checkbox" class="amb-toggle" value="library"> Library murmur</label>
+      <label class="chip"><input type="checkbox" class="amb-toggle" value="brown"> Brown noise</label>
+    </div>
+    <div class="group vol">
+      <span class="hint">Ambient Vol</span>
+      <input id="ambVol" type="range" min="0" max="1" step="0.01" value="0.3" aria-label="Ambient Volume" />
+      <button id="ambStop">⏹ Stop All</button>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="pomodoro" id="pomodoro">
+      <span class="mode-pill" id="pomoMode">Focus</span>
+      <div class="time" id="pomoTime">25:00</div>
+      <button id="pomoStart">▶️ Start</button>
+      <button id="pomoReset">↺ Reset</button>
+      <div class="settings" id="pomoSettings">
+        <button id="pomoGear" aria-label="Open Pomodoro settings">⚙️</button>
+        <div class="settings-panel" aria-label="Pomodoro Settings">
+          <label>Focus (min)
+            <input type="number" id="setFocus" min="1" max="180" value="25" />
+          </label>
+          <label>Short break (min)
+            <input type="number" id="setShort" min="1" max="60" value="5" />
+          </label>
+          <label>Long break (min)
+            <input type="number" id="setLong" min="1" max="90" value="15" />
+          </label>
+          <label>Sessions until long break
+            <input type="number" id="setUntilLong" min="1" max="12" value="4" />
+          </label>
+          <label>Auto-cycle next
+            <input type="checkbox" id="setAuto" checked />
+          </label>
+          <label>Chime on switch
+            <input type="checkbox" id="setChime" checked />
+          </label>
+        </div>
+      </div>
+      <span class="hint">Tip: Focus ↔ Breaks auto-toggle if enabled.</span>
+    </div>
+    <div class="group">
+      <button id="toggleTasks" title="Show/Hide Tasks (T)">🗒️ Tasks</button>
+    </div>
+  </div>
+
+  <main class="stage-wrap" id="stage">
+    <video id="video" playsinline loop muted preload="metadata" poster="" aria-label="Ambient environment video"></video>
+    <div class="vignette" aria-hidden="true"></div>
+    <div class="hud" id="hud">Scene: <strong id="hudScene">—</strong> • <span id="hudState">Paused</span></div>
+  </main>
+
+  <aside class="tasks" id="tasks">
+    <header>
+      <h2>Task Strip</h2>
+      <div>
+        <button id="closeTasks" title="Close">✖</button>
+      </div>
+    </header>
+    <div class="list" id="taskList" role="list"></div>
+    <form class="new" id="taskForm">
+      <input id="taskInput" type="text" placeholder="Add a task…" autocomplete="off" />
+      <button class="x" type="submit">Add</button>
+    </form>
+  </aside>
+
+  <footer>
+    <div>Shortcuts: <span class="kbd">Space</span> Play/Pause <span class="kbd">F</span> Fullscreen <span class="kbd">M</span> Mute <span class="kbd">↑/↓</span> Volume <span class="kbd">T</span> Tasks</div>
+    <div class="hint">Replace video URLs with your own for best quality.</div>
+  </footer>
+
+<script>
+(function(){
+  // Elements
+  const sceneSelect = document.getElementById('scene');
+  const video = document.getElementById('video');
+  const stage = document.getElementById('stage');
+  const btnPlay = document.getElementById('togglePlay');
+  const btnMute = document.getElementById('mute');
+  const btnFull = document.getElementById('fullscreen');
+  const vol = document.getElementById('vol');
+  const hudScene = document.getElementById('hudScene');
+  const hudState = document.getElementById('hudState');
+
+  // Ambient elements
+  const ambVol = document.getElementById('ambVol');
+  const ambStop = document.getElementById('ambStop');
+  const ambToggles = Array.from(document.querySelectorAll('.amb-toggle'));
+
+  // Pomodoro elements
+  const pomoModeEl = document.getElementById('pomoMode');
+  const pomoTimeEl = document.getElementById('pomoTime');
+  const pomoStart = document.getElementById('pomoStart');
+  const pomoReset = document.getElementById('pomoReset');
+  const pomoSettings = document.getElementById('pomoSettings');
+  const pomoGear = document.getElementById('pomoGear');
+  const setFocus = document.getElementById('setFocus');
+  const setShort = document.getElementById('setShort');
+  const setLong = document.getElementById('setLong');
+  const setUntilLong = document.getElementById('setUntilLong');
+  const setAuto = document.getElementById('setAuto');
+  const setChime = document.getElementById('setChime');
+
+  // Tasks panel elements
+  const tasks = document.getElementById('tasks');
+  const toggleTasks = document.getElementById('toggleTasks');
+  const closeTasks = document.getElementById('closeTasks');
+  const taskList = document.getElementById('taskList');
+  const taskForm = document.getElementById('taskForm');
+  const taskInput = document.getElementById('taskInput');
+
+  // LocalStorage keys
+  const LS = {
+    scene:'fw.scene', vol:'fw.vol', muted:'fw.muted',
+    ambVol:'fw.amb.vol', ambAct:'fw.amb.act',
+    tasks:'fw.tasks',
+    pomo:'fw.pomo' // stores durations, auto, chime
+  };
+
+  /*========================
+    Video / Scene Handling
+  ========================*/
+  function applyScene(value){
+    const option = [...sceneSelect.options].find(o => o.value === value) || sceneSelect.options[0];
+    sceneSelect.value = option.value;
+    video.src = option.getAttribute('data-src');
+    video.currentTime = 0;
+    hudScene.textContent = option.textContent.replace(/^[^\s]+\s/, '');
+    localStorage.setItem(LS.scene, option.value);
+    // Scene-affinity: pre-select appropriate ambients (doesn't auto-start audio without user gesture)
+    autoSelectAmbients(option.value);
+  }
+
+  const savedScene = localStorage.getItem(LS.scene) || sceneSelect.options[0].value;
+  applyScene(savedScene);
+
+  const savedVol = parseFloat(localStorage.getItem(LS.vol));
+  if (!isNaN(savedVol)) { video.volume = savedVol; vol.value = String(savedVol); } else { video.volume = 0.0; vol.value = '0'; }
+  const savedMuted = localStorage.getItem(LS.muted);
+  if (savedMuted !== null) video.muted = savedMuted === 'true';
+  updateMuteButton(); updatePlayButton();
+
+  video.addEventListener('canplay', attemptPlay);
+
+  function attemptPlay(){
+    video.play().then(()=>{ updatePlayButton(); hudState.textContent = 'Playing'; })
+      .catch(()=>{ updatePlayButton(); hudState.textContent = 'Paused'; });
+  }
+  function updatePlayButton(){ btnPlay.textContent = video.paused ? '▶️ Play' : '⏸️ Pause'; hudState.textContent = video.paused ? 'Paused' : 'Playing'; }
+  function updateMuteButton(){ btnMute.textContent = video.muted ? '🔇 Unmute' : '🔊 Mute'; }
+
+  sceneSelect.addEventListener('change', (e)=>{ applyScene(e.target.value); attemptPlay(); });
+  btnPlay.addEventListener('click', ()=>{ if (video.paused) video.play(); else video.pause(); updatePlayButton(); if (video.paused) openTasks(); });
+  btnMute.addEventListener('click', ()=>{ video.muted = !video.muted; localStorage.setItem(LS.muted, String(video.muted)); updateMuteButton(); });
+  vol.addEventListener('input', ()=>{ video.volume = parseFloat(vol.value); if (video.volume>0 && video.muted){ video.muted=false; localStorage.setItem(LS.muted,'false'); updateMuteButton(); } localStorage.setItem(LS.vol, String(video.volume)); });
+  btnFull.addEventListener('click', ()=>{ if (!document.fullscreenElement) stage.requestFullscreen?.(); else document.exitFullscreen?.(); });
+  video.addEventListener('play', ()=>{ updatePlayButton(); closeTasks(); });
+  video.addEventListener('pause', ()=>{ updatePlayButton(); });
+
+  stage.addEventListener('click', (ev)=>{ const bounds = ev.target.closest('header, select, button, input'); if (bounds) return; btnPlay.click(); });
+
+  /*========================
+    Ambient Sound System
+  ========================*/
+  let audioCtx = null; // created on first user gesture
+  const ambGains = {}; const ambNodes = {}; // per-track
+  const AMBIENTS = {
+    cabin:{ label:'Cabin hum', type:'file', src:'https://cdn.pixabay.com/download/audio/2022/03/15/audio_5a5b57cdbd.mp3?filename=airplane-cabin-ambient-19169.mp3' },
+    rail:{ label:'Rail rattle', type:'file', src:'https://cdn.pixabay.com/download/audio/2021/09/07/audio_6bcd779b5a.mp3?filename=train-sound-ambient-9192.mp3' },
+    rain:{ label:'Rain', type:'file', src:'https://cdn.pixabay.com/download/audio/2021/09/07/audio_7eea5f01ec.mp3?filename=rain-ambience-1-9645.mp3' },
+    library:{ label:'Library murmur', type:'file', src:'https://cdn.pixabay.com/download/audio/2022/03/15/audio_8b23d1b3a3.mp3?filename=library-ambience-19167.mp3' },
+    brown:{ label:'Brown noise', type:'brown' }
+  };
+
+  function ensureAudio(){ if (!audioCtx){ audioCtx = new (window.AudioContext||window.webkitAudioContext)(); }
+    if (audioCtx.state==='suspended'){ audioCtx.resume(); }
+  }
+  function setAmbVolume(v){ Object.values(ambGains).forEach(g=>{ if (g) g.gain.value = v; }); localStorage.setItem(LS.ambVol, String(v)); }
+
+  function loadFileNode(key){
+    if (!AMBIENTS[key] || AMBIENTS[key].type!=='file') return;
+    ensureAudio();
+    const track = AMBIENTS[key];
+    const el = new Audio(); el.src = track.src; el.crossOrigin = 'anonymous'; el.loop = true; el.preload = 'auto';
+    const src = audioCtx.createMediaElementSource(el);
+    const gain = audioCtx.createGain(); gain.gain.value = parseFloat(ambVol.value);
+    src.connect(gain).connect(audioCtx.destination);
+    ambNodes[key] = {el, src}; ambGains[key] = gain;
+    el.play().catch(()=>{/* user gesture required */});
+  }
+  function createBrownNoiseNode(key){
+    ensureAudio();
+    const bufferSize = 2 * audioCtx.sampleRate; // 2 seconds
+    const noiseBuffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+    const output = noiseBuffer.getChannelData(0);
+    let lastOut = 0.0; // Brownian
+    for (let i=0; i<bufferSize; i++){
+      const white = Math.random()*2 - 1;
+      lastOut = (lastOut + (0.02 * white)) / 1.02;
+      output[i] = lastOut * 3.5; // gain compensation
+    }
+    const whiteNoise = audioCtx.createBufferSource();
+    whiteNoise.buffer = noiseBuffer; whiteNoise.loop = true;
+    const gain = audioCtx.createGain(); gain.gain.value = parseFloat(ambVol.value)/2; // softer by default
+    whiteNoise.connect(gain).connect(audioCtx.destination);
+    ambNodes[key] = {node:whiteNoise}; ambGains[key] = gain;
+    whiteNoise.start();
+  }
+  function startAmbient(key){
+    if (ambNodes[key]) return; // already playing
+    const def = AMBIENTS[key];
+    if (!def) return;
+    if (def.type==='file') loadFileNode(key);
+    if (def.type==='brown') createBrownNoiseNode(key);
+  }
+  function stopAmbient(key){
+    const n = ambNodes[key]; if (!n) return;
+    if (n.el){ try{ n.el.pause(); n.el.src=''; }catch(e){} }
+    if (n.node){ try{ n.node.stop(); }catch(e){} }
+    if (ambGains[key]) ambGains[key].disconnect();
+    delete ambNodes[key]; delete ambGains[key];
+  }
+  function stopAllAmbients(){ Object.keys(ambNodes).forEach(stopAmbient); ambToggles.forEach(t=>t.checked=false); }
+
+  // Ambient UI
+  ambToggles.forEach(t=>{
+    t.addEventListener('change', ()=>{
+      ensureAudio();
+      if (t.checked){ startAmbient(t.value); } else { stopAmbient(t.value); }
+      persistAmbients();
+    })
+  });
+  ambVol.addEventListener('input', ()=> setAmbVolume(parseFloat(ambVol.value)));
+  ambStop.addEventListener('click', ()=>{ stopAllAmbients(); persistAmbients(); });
+
+  // Persist/restore ambient state
+  function persistAmbients(){ const active = ambToggles.filter(t=>t.checked).map(t=>t.value); localStorage.setItem(LS.ambAct, JSON.stringify(active)); }
+  (function restoreAmbients(){
+    const saved = JSON.parse(localStorage.getItem(LS.ambAct)||'[]');
+    const savedVol = parseFloat(localStorage.getItem(LS.ambVol)); if (!isNaN(savedVol)) { ambVol.value = String(savedVol); }
+    ambToggles.forEach(t=>{ t.checked = saved.includes(t.value); if (t.checked){ /* lazy start on first gesture */ } });
+  })();
+
+  // Auto-select ambients based on scene (does not start audio automatically)
+  function autoSelectAmbients(scene){
+    const map = { plane:['cabin','brown'], train:['rail','rain'], library:['library','rain'] };
+    const want = map[scene] || [];
+    ambToggles.forEach(t=>{ t.checked = want.includes(t.value); });
+    persistAmbients();
+  }
+
+  // Start any checked ambients once user interacts
+  ['click','keydown'].forEach(evt=>{
+    window.addEventListener(evt, ()=>{
+      if (!audioCtx) return; // ensureAudio will be called in handlers
+    }, {once:true});
+  });
+
+  /*========================
+      Pomodoro Timer
+  ========================*/
+  const POMO = { mode:'focus', remaining: 25*60, running:false, interval:null, sessions:0 };
+  function loadPomoSettings(){
+    const s = JSON.parse(localStorage.getItem(LS.pomo)||'{}');
+    setFocus.value = s.focusMin || 25; setShort.value = s.shortMin || 5; setLong.value = s.longMin || 15;
+    setUntilLong.value = s.untilLong || 4; setAuto.checked = s.auto ?? true; setChime.checked = s.chime ?? true;
+    setRemainingFromMode();
+  }
+  function savePomoSettings(){
+    const s = { focusMin:+setFocus.value, shortMin:+setShort.value, longMin:+setLong.value, untilLong:+setUntilLong.value, auto:!!setAuto.checked, chime:!!setChime.checked };
+    localStorage.setItem(LS.pomo, JSON.stringify(s));
+  }
+  function setRemainingFromMode(){
+    const mins = POMO.mode==='focus' ? +setFocus.value : (POMO.mode==='short' ? +setShort.value : +setLong.value);
+    POMO.remaining = mins*60; updatePomoUI();
+  }
+  function formatTime(sec){ const m=Math.floor(sec/60).toString().padStart(2,'0'); const s=(sec%60).toString().padStart(2,'0'); return `${m}:${s}`; }
+  function updatePomoUI(){ pomoModeEl.textContent = POMO.mode==='focus'?'Focus':(POMO.mode==='short'?'Short break':'Long break'); pomoTimeEl.textContent = formatTime(POMO.remaining); pomoStart.textContent = POMO.running ? '⏸️ Pause' : '▶️ Start'; }
+  function chime(){ if (!setChime.checked) return; try{ ensureAudio(); const o = audioCtx.createOscillator(); const g = audioCtx.createGain(); o.type='sine'; o.frequency.value=880; g.gain.value=0.0001; o.connect(g).connect(audioCtx.destination); o.start(); const t=audioCtx.currentTime; g.gain.exponentialRampToValueAtTime(0.05,t+0.02); g.gain.exponentialRampToValueAtTime(0.0001,t+0.6); o.stop(t+0.65); }catch(e){} }
+  function switchMode(next){
+    POMO.mode = next; setRemainingFromMode(); updatePomoUI(); chime();
+    if (POMO.mode!=='focus'){ video.pause(); openTasks(); } else { video.play().catch(()=>{}); closeTasks(); }
+  }
+  function step(){ if (!POMO.running) return; if (POMO.remaining>0){ POMO.remaining--; updatePomoUI(); return; }
+    // Reached zero
+    if (POMO.mode==='focus'){ POMO.sessions++; const isLong = (POMO.sessions % +setUntilLong.value)===0; switchMode(isLong?'long':'short'); }
+    else { switchMode('focus'); }
+    if (!setAuto.checked){ POMO.running=false; updatePomoUI(); clearInterval(POMO.interval); POMO.interval=null; return; }
+  }
+  function startPomo(){ if (POMO.running) return; POMO.running=true; updatePomoUI(); if (!POMO.interval) POMO.interval=setInterval(step,1000); if (POMO.mode==='focus'){ video.play().catch(()=>{}); } }
+  function pausePomo(){ POMO.running=false; updatePomoUI(); if (POMO.interval){ clearInterval(POMO.interval); POMO.interval=null; } }
+  function resetPomo(){ pausePomo(); POMO.sessions=0; setRemainingFromMode(); updatePomoUI(); }
+
+  loadPomoSettings();
+  pomoStart.addEventListener('click', ()=>{ if (POMO.running) pausePomo(); else startPomo(); });
+  pomoReset.addEventListener('click', resetPomo);
+  pomoGear.addEventListener('click', ()=>{ pomoSettings.classList.toggle('open'); });
+  [setFocus,setShort,setLong,setUntilLong,setAuto,setChime].forEach(el=> el.addEventListener('input', ()=>{ savePomoSettings(); if (!POMO.running) setRemainingFromMode(); }));
+
+  /*========================
+        Tasks Panel
+  ========================*/
+  function openTasks(){ tasks.classList.add('open'); }
+  function closeTasks(){ tasks.classList.remove('open'); }
+  toggleTasks.addEventListener('click', ()=>{ tasks.classList.toggle('open'); });
+  closeTasks.addEventListener('click', closeTasks);
+
+  function loadTasks(){ const list = JSON.parse(localStorage.getItem(LS.tasks)||'[]'); list.forEach(addTaskEl); }
+  function saveTasks(){ const data = Array.from(taskList.children).map(li=>({ id:li.dataset.id, text:li.querySelector('span').textContent, done:li.classList.contains('done') })); localStorage.setItem(LS.tasks, JSON.stringify(data)); }
+  function addTaskEl(item){
+    const li = document.createElement('div'); li.className='task'; li.dataset.id = item.id || String(Date.now()+Math.random());
+    const cb = document.createElement('input'); cb.type='checkbox'; cb.checked = !!item.done; cb.addEventListener('change', ()=>{ li.classList.toggle('done', cb.checked); saveTasks(); });
+    const span = document.createElement('span'); span.textContent = item.text || '';
+    const del = document.createElement('button'); del.textContent='🗑️'; del.title='Delete'; del.addEventListener('click', ()=>{ li.remove(); saveTasks(); });
+    li.append(cb, span, del); if (cb.checked) li.classList.add('done'); taskList.append(li);
+  }
+  taskForm.addEventListener('submit', (e)=>{ e.preventDefault(); const text = taskInput.value.trim(); if (!text) return; addTaskEl({text, done:false}); taskInput.value=''; saveTasks(); });
+  loadTasks();
+
+  /*========================
+        Keyboard Shortcuts
+  ========================*/
+  window.addEventListener('keydown', (e)=>{
+    const tag = document.activeElement?.tagName?.toLowerCase(); if (tag==='input' || tag==='select' || tag==='textarea') return;
+    if (e.code==='Space'){ e.preventDefault(); btnPlay.click(); }
+    if (e.key.toLowerCase()==='m'){ btnMute.click(); }
+    if (e.key.toLowerCase()==='f'){ btnFull.click(); }
+    if (e.key==='ArrowUp'){ e.preventDefault(); vol.value = String(Math.min(1, parseFloat(vol.value)+0.05).toFixed(2)); vol.dispatchEvent(new Event('input')); }
+    if (e.key==='ArrowDown'){ e.preventDefault(); vol.value = String(Math.max(0, parseFloat(vol.value)-0.05).toFixed(2)); vol.dispatchEvent(new Event('input')); }
+    if (e.key.toLowerCase()==='t'){ tasks.classList.toggle('open'); }
+  });
+})();
+</script>
+</body>
+</html>

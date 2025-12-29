@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Focus Window — Autoplay Fix v3 + Diagnostics</title>
+<style>
+  :root{ --radius:18px; }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0; background:#0b0b0b; color:#e8e8e8; font:16px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Inter,Helvetica,Arial,sans-serif;}
+  header{display:flex; align-items:center; gap:10px; padding:10px 14px}
+  header .spacer{flex:1}
+  select,button,input[type="range"],label.chip{background:#151515; color:#e8e8e8; border:1px solid #2a2a2a; padding:10px 12px; border-radius:12px}
+  button{cursor:pointer}
+  a{color:#93c5fd}
+  main{display:grid; place-items:center}
+  .stage{position:relative; width:90vw; height:90vh; border-radius:var(--radius); overflow:hidden; background:#000; box-shadow:0 30px 80px rgba(0,0,0,.65), 0 0 0 1px #000 inset}
+  video{position:absolute; inset:0; width:100%; height:100%; object-fit:cover; display:block; filter:contrast(1.05) saturate(1.05); z-index:0}
+  .vignette{pointer-events:none; position:absolute; inset:0; background:radial-gradient(ellipse at center, rgba(0,0,0,0) 60%, rgba(0,0,0,.35) 78%, rgba(0,0,0,.7) 100%); z-index:1}
+  #progressRing{position:absolute; bottom:12px; left:12px; background:rgba(0,0,0,.35); border-radius:12px; border:1px solid rgba(255,255,255,.06); z-index:2}
+  .ambient{display:flex; gap:8px; align-items:center; padding:8px 14px; flex-wrap:wrap}
+  .chip{display:inline-flex; align-items:center; gap:8px}
+  .chip input{margin:0}
+  .muted{opacity:.75}
+  .overlay{position:absolute; inset:0; display:grid; place-items:center; background:linear-gradient(180deg, rgba(0,0,0,.35), rgba(0,0,0,.55));
+    color:#e5e7eb; font-weight:600; letter-spacing:.3px; opacity:0; pointer-events:none; transition:opacity .2s ease; z-index:5}
+  .overlay.show{opacity:1; pointer-events:auto}
+  .overlay .buttons{display:flex; gap:10px}
+  .overlay .btn{display:inline-flex; align-items:center; gap:8px; padding:12px 16px; border-radius:12px; border:1px solid #2a2a2a; background:#151515; cursor:pointer}
+  .msg{position:absolute; bottom:10px; left:10px; font-size:.85rem; color:#d1d5db; opacity:.9; padding:6px 10px; background:rgba(0,0,0,.35); border:1px solid rgba(255,255,255,.06); border-radius:10px; backdrop-filter:blur(4px); z-index:6}
+  .diag{position:absolute; top:10px; right:10px; font-size:.8rem; color:#cbd5e1; background:rgba(0,0,0,.35); border:1px solid rgba(255,255,255,.06); border-radius:10px; padding:8px; z-index:6; max-width:50ch}
+</style>
+</head>
+<body>
+<header>
+  <label for="scene">Environment:</label>
+  <select id="scene" title="Select Environment"></select>
+  <a id="openSrc" href="#" target="_blank" rel="noopener">Open source</a>
+  <div class="spacer"></div>
+  <button id="downloadBtn">⬇️ Download .html</button>
+</header>
+<div class="ambient" role="group" aria-label="Ambient sound controls">
+  <span class="muted">Ambient:</span>
+  <label class="chip"><input type="checkbox" class="amb-toggle" value="cabin"> Cabin hum</label>
+  <label class="chip"><input type="checkbox" class="amb-toggle" value="rail"> Rail rattle</label>
+  <label class="chip"><input type="checkbox" class="amb-toggle" value="rain"> Rain</label>
+  <label class="chip"><input type="checkbox" class="amb-toggle" value="library"> Library murmur</label>
+  <label class="chip"><input type="checkbox" class="amb-toggle" value="brown"> Brown noise</label>
+  <label class="chip" title="Match ambients to selected scene"><input type="checkbox" id="autoAmbient"> Auto ambient with scene</label>
+  <span class="muted" style="margin-left:4px">Vol</span>
+  <input id="ambVol" type="range" min="0" max="1" step="0.01" value="0.3" aria-label="Ambient volume" />
+  <button id="ambStop">⏹ Stop All</button>
+</div>
+<main>
+  <div class="stage">
+    <video id="video" playsinline webkit-playsinline muted loop preload="metadata" poster="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1200' height='800'%3E%3Crect width='100%25' height='100%25' fill='black'/%3E%3Ctext x='50%25' y='50%25' fill='%23a3a3a3' font-family='system-ui' font-size='36' text-anchor='middle'%3ELoading scene…%3C/text%3E%3C/svg%3E"></video>
+    <div class="vignette" aria-hidden="true"></div>
+    <canvas id="progressRing" width="100" height="100"></canvas>
+    <div class="overlay show" id="overlay">
+      <div class="buttons">
+        <button class="btn" id="tapToStart">▶️ Start playback</button>
+        <button class="btn" id="showControls">🎛️ Show native controls</button>
+      </div>
+    </div>
+    <div class="msg" id="status">Awaiting click to unlock playback…</div>
+    <div class="diag" id="diag">State: —</div>
+  </div>
+</main>
+<script>
+// Scenes (add a super-compatible sample too)
+const SCENES = {
+  plane:   { label:'✈️ Plane — window seat',   src:'https://cdn.coverr.co/videos/coverr-airplane-window-0127/1080p.mp4' },
+  train:   { label:'🚆 Train — window seat',    src:'https://cdn.coverr.co/videos/coverr-train-journey-7726/1080p.mp4' },
+  library: { label:'📚 Library — by the window',src:'https://cdn.coverr.co/videos/coverr-library-sunlight-5709/1080p.mp4' },
+  cafe:    { label:'☕ Rainy café window',       src:'https://assets.mixkit.co/videos/preview/mixkit-raindrops-on-a-window-with-blurred-lights-in-the-background-99839-large.mp4' },
+  cabin:   { label:'🏔️ Mountain cabin window',  src:'https://assets.mixkit.co/videos/preview/mixkit-landscape-outside-a-cabin-in-the-winter-mountains-31637-large.mp4' },
+  city:    { label:'🌃 Nighttime city window',   src:'https://assets.mixkit.co/videos/preview/mixkit-hong-kong-skyline-at-night-47648-large.mp4' },
+  sample:  { label:'🌼 Sample (MDN flower, very compatible)', src:'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4' }
+};
+
+// DOM
+const sceneSel = document.getElementById('scene');
+const openSrc = document.getElementById('openSrc');
+const video = document.getElementById('video');
+const ambVol = document.getElementById('ambVol');
+const ambStop = document.getElementById('ambStop');
+const ambToggles = Array.from(document.querySelectorAll('.amb-toggle'));
+const autoAmbient = document.getElementById('autoAmbient');
+const downloadBtn = document.getElementById('downloadBtn');
+const overlay = document.getElementById('overlay');
+const tapToStart = document.getElementById('tapToStart');
+const showControlsBtn = document.getElementById('showControls');
+const statusMsg = document.getElementById('status');
+const diag = document.getElementById('diag');
+
+// Ambient
+let audioCtx = null; const ambGains = {}; const ambNodes = {};
+const AMBIENTS = {
+  cabin:{ type:'file', src:'https://cdn.pixabay.com/download/audio/2022/03/15/audio_5a5b57cdbd.mp3?filename=airplane-cabin-ambient-19169.mp3' },
+  rail:{ type:'file', src:'https://cdn.pixabay.com/download/audio/2021/09/07/audio_6bcd779b5a.mp3?filename=train-sound-ambient-9192.mp3' },
+  rain:{ type:'file', src:'https://cdn.pixabay.com/download/audio/2021/09/07/audio_7eea5f01ec.mp3?filename=rain-ambience-1-9645.mp3' },
+  library:{ type:'file', src:'https://cdn.pixabay.com/download/audio/2022/03/15/audio_8b23d1b3a3.mp3?filename=library-ambience-19167.mp3' },
+  brown:{ type:'brown' }
+};
+const LS = { scene:'fw.scene', ambVol:'fw.amb.vol', ambAct:'fw.amb.act', autoAmb:'fw.autoAmbient' };
+
+function setStatus(msg){ statusMsg.textContent = msg; }
+function setDiag(){
+  const rs = video.readyState; const er = video.error; const map={0:'HAVE_NOTHING',1:'HAVE_METADATA',2:'HAVE_CURRENT_DATA',3:'HAVE_FUTURE_DATA',4:'HAVE_ENOUGH_DATA'};
+  diag.textContent = `State: ${map[rs]||rs}${er?` | Error ${er.code}`:''}`;
+}
+function showOverlay(){ overlay.classList.add('show'); }
+function hideOverlay(){ overlay.classList.remove('show'); }
+function ensureAudio(){ if (!audioCtx){ audioCtx = new (window.AudioContext||window.webkitAudioContext)(); } if (audioCtx.state==='suspended'){ audioCtx.resume(); } }
+function setAmbVolume(v){ Object.values(ambGains).forEach(g=>{ if (g) g.gain.value = v; }); localStorage.setItem(LS.ambVol, String(v)); }
+function loadFileNode(key){ const track = AMBIENTS[key]; if (!track || track.type!=='file') return; ensureAudio(); const el = new Audio(); el.src = track.src; el.crossOrigin='anonymous'; el.loop=true; el.preload='auto'; const src = audioCtx.createMediaElementSource(el); const gain = audioCtx.createGain(); gain.gain.value = parseFloat(ambVol.value||'0.3'); src.connect(gain).connect(audioCtx.destination); ambNodes[key] = {el, src}; ambGains[key] = gain; el.play().catch(()=>{}); }
+function createBrownNoiseNode(key){ ensureAudio(); const bufferSize = 2 * audioCtx.sampleRate; const noiseBuffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate); const output = noiseBuffer.getChannelData(0); let lastOut = 0; for (let i=0;i<bufferSize;i++){ const white=Math.random()*2-1; lastOut=(lastOut+(0.02*white))/1.02; output[i]=lastOut*3.5; } const node = audioCtx.createBufferSource(); node.buffer=noiseBuffer; node.loop=true; const gain = audioCtx.createGain(); gain.gain.value = parseFloat(ambVol.value||'0.3')/2; node.connect(gain).connect(audioCtx.destination); ambNodes[key]={node}; ambGains[key]=gain; node.start(); }
+function startAmbient(key){ if (ambNodes[key]) return; const def=AMBIENTS[key]; if (!def) return; if (def.type==='file') loadFileNode(key); else createBrownNoiseNode(key); }
+function stopAmbient(key){ const n = ambNodes[key]; if (!n) return; if (n.el){ try{ n.el.pause(); n.el.src=''; }catch{} } if (n.node){ try{ n.node.stop(); }catch{} } if (ambGains[key]) ambGains[key].disconnect(); delete ambNodes[key]; delete ambGains[key]; }
+function stopAllAmbients(){ Object.keys(ambNodes).forEach(stopAmbient); ambToggles.forEach(t=>t.checked=false); persistAmbients(); }
+function persistAmbients(){ const active = ambToggles.filter(t=>t.checked).map(t=>t.value); localStorage.setItem(LS.ambAct, JSON.stringify(active)); }
+(function restoreAmbients(){ const saved = JSON.parse(localStorage.getItem(LS.ambAct)||'[]'); const savedVol = parseFloat(localStorage.getItem(LS.ambVol)); if (!isNaN(savedVol)) ambVol.value = String(savedVol); ambToggles.forEach(t=>{ t.checked = saved.includes(t.value); }); })();
+function desiredAmbientsFor(scene){ const map = { plane:['cabin','brown'], train:['rail','rain'], library:['library','rain'], cafe:['rain','brown'], cabin:['brown','rain'], city:['brown'], sample:['brown'] }; return map[scene]||[]; }
+function autoSelectAmbients(scene){ const want = desiredAmbientsFor(scene); ambToggles.forEach(t=>{ t.checked = want.includes(t.value); }); persistAmbients(); }
+function applyAutoAmbients(scene){ ensureAudio(); const want=new Set(desiredAmbientsFor(scene)); ambToggles.forEach(t=>{ if (want.has(t.value)){ startAmbient(t.value); t.checked=true; } else { stopAmbient(t.value); t.checked=false; } }); persistAmbients(); }
+ambToggles.forEach(t=>t.addEventListener('change', ()=>{ ensureAudio(); if (t.checked) startAmbient(t.value); else stopAmbient(t.value); persistAmbients(); }));
+ambVol.addEventListener('input', ()=> setAmbVolume(parseFloat(ambVol.value||'0.3')));
+ambStop.addEventListener('click', stopAllAmbients);
+
+// Build scene selector
+for (const [key,def] of Object.entries(SCENES)){
+  const opt = document.createElement('option'); opt.value=key; opt.textContent=def.label; opt.dataset.src=def.src; sceneSel.appendChild(opt);
+}
+
+async function tryPlay(){
+  try{
+    video.muted=true; video.setAttribute('muted',''); video.setAttribute('playsinline',''); video.setAttribute('webkit-playsinline','');
+    const p = video.play(); if (p && p.then) await p; hideOverlay(); setStatus('Playing'); setDiag(); return true;
+  }catch(err){ setStatus('Tap ▶ to start'); showOverlay(); setDiag(); return false; }
+}
+function setSource(url){
+  // Full reset first
+  video.pause(); video.removeAttribute('src'); video.load();
+  video.src = url; openSrc.href = url; video.load(); setDiag();
+}
+function applyScene(key){
+  const def = SCENES[key] || SCENES.sample; setSource(def.src);
+  localStorage.setItem(LS.scene, key); setStatus('Loading…');
+  const aa = document.getElementById('autoAmbient'); if (aa && aa.checked) applyAutoAmbients(key); else autoSelectAmbients(key);
+  // Try to play now; if blocked keep overlay visible
+  tryPlay();
+}
+
+// Events
+['loadedmetadata','canplay','canplaythrough','playing','pause','waiting','stalled','error','emptied','loadstart','progress'].forEach(ev=>{
+  video.addEventListener(ev, ()=>{ setDiag(); });
+});
+video.addEventListener('error', ()=>{ setStatus('⚠️ Video failed to load'); showOverlay(); });
+showControlsBtn.addEventListener('click', ()=>{ video.controls = true; setStatus('Native controls enabled'); hideOverlay(); });
+
+// Overlay unlocks
+['click','touchstart','keydown'].forEach(evt=>{
+  overlay.addEventListener(evt, ()=>{ ensureAudio(); tryPlay(); });
+  tapToStart.addEventListener(evt, ()=>{ ensureAudio(); tryPlay(); });
+});
+
+const saved = localStorage.getItem(LS.scene) || 'sample';
+sceneSel.value = SCENES[saved] ? saved : 'sample';
+applyScene(sceneSel.value);
+sceneSel.addEventListener('change', e=> applyScene(e.target.value));
+
+// Download
+ downloadBtn.addEventListener('click', ()=>{
+  const html = '<!DOCTYPE html>\n' + document.documentElement.outerHTML;
+  const blob = new Blob([html], {type:'text/html'});
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'focus-window-autoplay-v3.html'; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href), 500);
+});
+
+// Draw the ring once (visual only)
+(function draw(){ const c=document.getElementById('progressRing'); const ctx=c.getContext('2d'); ctx.clearRect(0,0,c.width,c.height); ctx.beginPath(); ctx.arc(c.width/2,c.height/2,c.width/2-6,0,Math.PI*2); ctx.strokeStyle='rgba(255,255,255,.15)'; ctx.lineWidth=8; ctx.stroke(); })();
+</script>
+</body>
+</html>
